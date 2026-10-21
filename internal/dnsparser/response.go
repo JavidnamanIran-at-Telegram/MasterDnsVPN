@@ -145,7 +145,8 @@ func buildResponseWithFlagsLite(request []byte, parsed LitePacket, flags uint16)
 }
 
 func buildNoDataResponseLite(request []byte, parsed LitePacket) ([]byte, error) {
-	return buildResponseWithRCodeLite(request, parsed, Enums.DNSR_CODE_NO_ERROR)
+	// In-zone NODATA must come from the authority, or resolvers mark us lame.
+	return buildAuthoritativeResponseWithRCodeLite(request, parsed, Enums.DNSR_CODE_NO_ERROR)
 }
 
 func getARCount(optLen int) int {

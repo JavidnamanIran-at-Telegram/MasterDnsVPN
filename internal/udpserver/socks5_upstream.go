@@ -223,7 +223,7 @@ func (s *Server) dialExternalSOCKS5TargetContext(ctx context.Context, targetPayl
 			err:        errors.New("upstream proxy is not a valid SOCKS5 server"),
 		}
 	}
-	if err := s.handleExternalSOCKS5Auth(conn, greeting[1]); err != nil {
+	if err := s.handleExternalSOCKS5AuthCtx(ctx, conn, greeting[1]); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -284,7 +284,14 @@ func (s *Server) externalSOCKS5Greeting() []byte {
 	return externalSOCKS5NoAuthGreeting
 }
 
+// handleExternalSOCKS5Auth keeps upstream's signature so callers that have no
+// member in hand (the UDP-associate path) are untouched; the stream path uses
+// the ctx variant below and authenticates as the member who owns the session.
 func (s *Server) handleExternalSOCKS5Auth(conn net.Conn, method byte) error {
+	return s.handleExternalSOCKS5AuthCtx(context.Background(), conn, method)
+}
+
+func (s *Server) handleExternalSOCKS5AuthCtx(ctx context.Context, conn net.Conn, method byte) error {
 	if !s.externalSOCKS5Auth {
 		if method == 0x00 {
 			return nil
@@ -302,14 +309,22 @@ func (s *Server) handleExternalSOCKS5Auth(conn net.Conn, method byte) error {
 		}
 	}
 
-	request := make([]byte, 3+len(s.externalSOCKS5User)+len(s.externalSOCKS5Pass))
+	// Charge the stream to whoever opened the session rather than to one
+	// shared account. Without a member in the context this is the stock
+	// behaviour, so an unforked deployment is unaffected.
+	authUser, authPass := s.externalSOCKS5User, s.externalSOCKS5Pass
+	if account, ok := memberFromContext(ctx); ok {
+		authUser, authPass = []byte(account.User), []byte(account.Pass)
+	}
+
+	request := make([]byte, 3+len(authUser)+len(authPass))
 	request[0] = 0x01
-	request[1] = byte(len(s.externalSOCKS5User))
+	request[1] = byte(len(authUser))
 	offset := 2
-	offset += copy(request[offset:], s.externalSOCKS5User)
-	request[offset] = byte(len(s.externalSOCKS5Pass))
+	offset += copy(request[offset:], authUser)
+	request[offset] = byte(len(authPass))
 	offset++
-	copy(request[offset:], s.externalSOCKS5Pass)
+	copy(request[offset:], authPass)
 	if err := writeAll(conn, request); err != nil {
 		return &upstreamSOCKS5Error{packetType: Enums.PACKET_SOCKS5_AUTH_FAILED, err: err}
 	}

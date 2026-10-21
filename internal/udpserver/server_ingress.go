@@ -61,12 +61,36 @@ func (s *Server) handleParsedPacket(packet []byte, parsed DnsParser.LitePacket, 
 	}
 }
 func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision) []byte {
-	vpnPacket, err := VpnProto.ParseInflatedFromLabels(decision.Labels, s.codec)
+	// With per-member identity on, the label directly above the zone is the
+	// member's token and is not part of the payload. An absent or unknown
+	// token is refused here, before any session exists - that refusal is the
+	// whole of the metering boundary.
+	tunnelLabels := decision.Labels
+	rememberMember := func(uint32) {}
+	if MemberIdentityEnabled() {
+		payload, token, ok := splitMemberToken(decision.RequestName, decision.BaseDomain, tunnelLabels)
+		if !ok {
+			return s.buildNoDataResponseLiteLogged(packet, parsed, "member-token-missing")
+		}
+		account, authorized := authorizeMember(token)
+		if !authorized {
+			return s.buildNoDataResponseLiteLogged(packet, parsed, "member-token-unknown")
+		}
+		tunnelLabels = payload
+		rememberMember = func(sessionID uint32) { rememberMemberSession(sessionID, account) }
+	}
+
+	vpnPacket, err := VpnProto.ParseInflatedFromLabels(tunnelLabels, s.codec)
 	if err != nil {
 		return s.buildNoDataResponseLiteLogged(packet, parsed, "vpn-proto-parse-failed")
 	}
 
+	// Only the first packets of a session carry a name we parsed, so bind the
+	// session id to the member now; later streams are charged from that.
+	rememberMember(uint32(vpnPacket.SessionID))
+
 	if vpnPacket.PacketType == Enums.PACKET_SESSION_CLOSE {
+		forgetMemberSession(uint32(vpnPacket.SessionID))
 		s.handleSessionCloseNotice(vpnPacket, time.Now())
 		return s.buildNoDataResponseLiteLogged(packet, parsed, "session-close-notice")
 	}

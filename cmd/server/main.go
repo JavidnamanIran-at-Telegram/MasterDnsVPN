@@ -176,6 +176,15 @@ func main() {
 		)
 	}
 
+	if cfg.MemberCredsPath != "" {
+		UDPServer.EnableMemberIdentity(cfg.MemberCredsPath)
+		log.Infof(
+			"\U0001F464 <green>Per-member identity: <cyan>%s</cyan> <magenta>|</magenta> authorized: <cyan>%d</cyan></green>",
+			cfg.MemberCredsPath,
+			UDPServer.AuthorizedMembers(),
+		)
+	}
+
 	if keyInfo.Generated {
 		log.Warnf(
 			"\U0001F5DD\uFE0F <yellow>Encryption Key Generated, Path: <cyan>%s</cyan></yellow>",

@@ -348,7 +348,14 @@ func (s *Server) processDeferredSOCKS5Syn(ctx context.Context, vpnPacket VpnProt
 	attemptCtx, cancelAttempt := context.WithTimeout(ctx, attemptTimeout)
 	defer cancelAttempt()
 
-	upstreamConn, err := s.dialSOCKSStreamTargetContext(attemptCtx, target.Host, target.Port, assembledTarget)
+	// Hand the dial the member this session belongs to, so the SOCKS login
+	// it presents upstream is theirs.
+	dialCtx := attemptCtx
+	if account, ok := memberForSession(uint32(vpnPacket.SessionID)); ok {
+		dialCtx = withMember(dialCtx, account)
+	}
+
+	upstreamConn, err := s.dialSOCKSStreamTargetContext(dialCtx, target.Host, target.Port, assembledTarget)
 
 	if err != nil {
 		timedOut := errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
